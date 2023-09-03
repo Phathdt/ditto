@@ -1,16 +1,15 @@
 package cmd
 
 import (
+	"ditto/listener"
 	"ditto/shared/common"
+	"ditto/shared/component/pgxc"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	sctx "github.com/viettranx/service-context"
-	"github.com/viettranx/service-context/component/ginc"
 )
 
 const (
@@ -18,15 +17,10 @@ const (
 	version     = "1.0.0"
 )
 
-type GINComponent interface {
-	GetPort() int
-	GetRouter() *gin.Engine
-}
-
 func newServiceCtx() sctx.ServiceContext {
 	return sctx.NewServiceContext(
 		sctx.WithName(serviceName),
-		sctx.WithComponent(ginc.NewGin(common.KeyCompGin)),
+		sctx.WithComponent(pgxc.New(common.KeyCompPgx)),
 	)
 }
 
@@ -44,14 +38,9 @@ var rootCmd = &cobra.Command{
 			logger.Fatal(err)
 		}
 
-		comp := serviceCtx.MustGet("gin").(GINComponent)
+		lis := listener.New(serviceCtx)
 
-		router := comp.GetRouter()
-		router.Use(gin.Recovery(), gin.Logger())
-
-		if err := router.Run(fmt.Sprintf(":%d", comp.GetPort())); err != nil {
-			log.Fatal(err)
-		}
+		lis.Process()
 	},
 }
 
