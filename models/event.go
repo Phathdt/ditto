@@ -19,8 +19,10 @@ type Event struct {
 }
 
 // SubjectName creates subject name from the prefix, schema and table name. Also using topic map from cfg.
-func (e *Event) SubjectName() string {
-	topic := fmt.Sprintf("%s_%s", e.Schema, e.Table)
+func (e *Event) SubjectName(topicMapping map[string]string) string {
+	if topicMapping[e.Table] != "" {
+		return topicMapping[e.Table]
+	}
 
-	return topic
+	return fmt.Sprintf("%s_%s", e.Schema, e.Table)
 }

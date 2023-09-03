@@ -20,6 +20,7 @@ type PgxComp interface {
 type pgxc struct {
 	id       string
 	dbDsn    string
+	tableMap map[string][]string
 	logger   sctx.Logger
 	conn     *pgconn.PgConn
 	sysident pglogrepl.IdentifySystemResult

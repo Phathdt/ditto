@@ -1,6 +1,7 @@
 package common
 
 const (
-	KeyCompGin = "gin"
-	KeyCompPgx = "pgx"
+	KeyCompGin     = "gin"
+	KeyCompPgx     = "pgx"
+	KeyCompNatsPub = "nats-pub"
 )

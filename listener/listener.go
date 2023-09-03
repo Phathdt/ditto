@@ -6,11 +6,14 @@ import (
 	"ditto/models"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
+	"ditto/shared/component/watermillapp"
 	"encoding/binary"
 	"fmt"
+	"github.com/goccy/go-json"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/namsral/flag"
 	sctx "github.com/viettranx/service-context"
 	"sync"
 	"time"
@@ -21,29 +24,47 @@ type Parser interface {
 }
 
 type listener struct {
-	conn     *pgconn.PgConn
-	sysident pglogrepl.IdentifySystemResult
-	logger   sctx.Logger
-	parser   Parser
-	mu       sync.RWMutex
-	lsn      pglogrepl.LSN
+	conn      *pgconn.PgConn
+	sysident  pglogrepl.IdentifySystemResult
+	logger    sctx.Logger
+	parser    Parser
+	mu        sync.RWMutex
+	lsn       pglogrepl.LSN
+	publisher watermillapp.Publisher
 }
 
 func New(sc sctx.ServiceContext) *listener {
 	conn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetConn()
 	sysident := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetIdentity()
 	lsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetLsn()
+	publisher := sc.MustGet(common.KeyCompNatsPub).(watermillapp.Publisher)
 	logger := sc.Logger("global")
 
 	parser := parsers.NewBinaryParser(binary.BigEndian)
 
-	return &listener{conn: conn, sysident: sysident, lsn: lsn, logger: logger, parser: parser}
+	return &listener{conn: conn, sysident: sysident, lsn: lsn, logger: logger, parser: parser, publisher: publisher}
 }
 
-func (l *listener) Process() {
+func (l *listener) Process() error {
 	clientXLogPos := l.sysident.XLogPos
 	standbyMessageTimeout := time.Second * 10
 	nextStandbyMessageDeadline := time.Now().Add(standbyMessageTimeout)
+
+	var tableFilterRaw string
+	var topicMappingRaw string
+	flag.StringVar(&tableFilterRaw, "table_filter", "", "filter messages by table")
+	flag.StringVar(&topicMappingRaw, "topic_mapping", "", "mapping topic")
+
+	flag.Parse()
+	tableFilter := make(map[string][]string)
+	if err := json.Unmarshal([]byte(tableFilterRaw), &tableFilter); err != nil {
+		return err
+	}
+
+	topicMapping := make(map[string]string)
+	if err := json.Unmarshal([]byte(topicMappingRaw), &topicMapping); err != nil {
+		return err
+	}
 
 	tx := models.NewWalTransaction()
 
@@ -104,10 +125,14 @@ func (l *listener) Process() {
 			}
 
 			if tx.CommitTime != nil {
-				events := tx.CreateEvents()
-				for i, event := range events {
-					fmt.Printf("event %d = %+v\n", i, event)
+				events := tx.CreateEventsWithFilter(tableFilter)
+				for _, event := range events {
+					fmt.Println(">>>>>>>>>>>>>>>>>>>")
+					if err = l.publisher.Publish(event.SubjectName(topicMapping), event); err != nil {
+						l.logger.Errorln(err)
+					}
 				}
+
 				tx.Clear()
 			}
 

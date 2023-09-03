@@ -4,6 +4,7 @@ import (
 	"ditto/listener"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
+	"ditto/shared/component/watermillapp/natspub"
 	"fmt"
 	"os"
 	"time"
@@ -21,6 +22,7 @@ func newServiceCtx() sctx.ServiceContext {
 	return sctx.NewServiceContext(
 		sctx.WithName(serviceName),
 		sctx.WithComponent(pgxc.New(common.KeyCompPgx)),
+		sctx.WithComponent(natspub.NewNatsPub(common.KeyCompNatsPub)),
 	)
 }
 
@@ -40,7 +42,9 @@ var rootCmd = &cobra.Command{
 
 		lis := listener.New(serviceCtx)
 
-		lis.Process()
+		if err := lis.Process(); err != nil {
+			panic(err)
+		}
 	},
 }
 
