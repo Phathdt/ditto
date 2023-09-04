@@ -20,7 +20,6 @@ jobs:
         run: |
           if [[ ${{ github.event.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$ ]] && [[ ${{ github.event.base_ref }} =~ ^refs/heads/master ]]; then
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
-            echo "IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-9)" >> "$GITHUB_ENV"
             echo "[INFO] PASSED pre-check. Using build automatically production from release"
             exit 0
           fi
