@@ -1,8 +1,11 @@
 name: build and push image
 on:
   push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
     branches:
-      - master
+      - 'release/v[0-9]+.[0-9]+.[0-9]+*'
+      - 'refs/tags/v[0-9]+.[0-9]+.[0-9]+*'
 
   workflow_dispatch:
     inputs:
@@ -13,15 +16,28 @@ on:
         default: 'deploy'
         options:
           - 'deploy'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
     branches:
-      - master
+      - 'release/v[0-9]+.[0-9]+.[0-9]+*'
+      - 'refs/tags/v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
-  docker:
+  build-image:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+
+      - name: Pre-check step and set env prod from release
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: get_current_env_prod
+        run: |
+          if [[ ${{ github.event.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$ ]] && [[ ${{ github.event.base_ref }} =~ ^refs/heads/master ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+            echo "[INFO] PASSED pre-check. Using build automatically production from release"
+            exit 0
+          fi
 
       - name: Login Docker Hub
         uses: docker/login-action@v1
@@ -33,25 +49,16 @@ jobs:
         uses: docker/setup-buildx-action@v1
         id: buildx
 
-      - name: Cache Docker Image Layers
-        uses: actions/cache@v2
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v2
-        id: docker_build
-        with:
-          context: ./
-          file: ./Dockerfile
-          builder: ${{ steps.buildx.outputs.name }}
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ditto
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
-
-      - name: Verify
-        run: echo ${{ steps.docker_build.outputs.digest }}
+      - name: Build, tag, and push image to Amazon ECR
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: build-image
+        timeout-minutes: 15 #####
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-9)
+          DOCKER_REPOSITORY=${{ secrets.DOCKERHUB_USERNAME }}/ditto
+          docker build -t ${DOCKER_REPOSITORY}:${{ env.VERSION }} -f ./Dockerfile .
+          docker tag ${DOCKER_REPOSITORY}:${{ env.VERSION }} ${DOCKER_REPOSITORY}:${IMAGE_TAG_LATEST}
+          docker push ${DOCKER_REPOSITORY}:${{ env.VERSION }}
+          docker push ${DOCKER_REPOSITORY}:${IMAGE_TAG_LATEST}
