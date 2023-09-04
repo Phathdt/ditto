@@ -7,21 +7,6 @@ on:
       - 'release/v[0-9]+.[0-9]+.[0-9]+*'
       - 'refs/tags/v[0-9]+.[0-9]+.[0-9]+*'
 
-  workflow_dispatch:
-    inputs:
-      hubAddressGroupObject:
-        type: choice
-        description: 'Deploy service 🚀🚀🚀'
-        required: true
-        default: 'deploy'
-        options:
-          - 'deploy'
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
-    branches:
-      - 'release/v[0-9]+.[0-9]+.[0-9]+*'
-      - 'refs/tags/v[0-9]+.[0-9]+.[0-9]+*'
-
 jobs:
   build-image:
     runs-on: ubuntu-latest
