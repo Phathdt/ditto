@@ -10,7 +10,7 @@ FROM alpine:3.18
 WORKDIR /app
 RUN chown nobody:nobody /app
 USER nobody:nobody
-COPY --from=builder --chown=nobody:nobody ./app/wal-listener .
+COPY --from=builder --chown=nobody:nobody ./app/ditto .
 COPY --from=builder --chown=nobody:nobody ./app/run.sh .
 
 ENTRYPOINT sh run.sh
