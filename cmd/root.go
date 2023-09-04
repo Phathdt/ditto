@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"ditto/listener"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
 	"ditto/shared/component/watermillapp/natspub"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -42,9 +45,33 @@ var rootCmd = &cobra.Command{
 
 		lis := listener.New(serviceCtx)
 
-		if err := lis.Process(); err != nil {
-			panic(err)
+		go func() {
+			if err := lis.Process(); err != nil {
+				panic(err)
+			}
+		}()
+
+		// Wait for interrupt signal to gracefully shutdown the server with
+		// a timeout of 5 seconds.
+		quit := make(chan os.Signal)
+		// kill (no param) default send syscanll.SIGTERM
+		// kill -2 is syscall.SIGINT
+		// kill -9 is syscall. SIGKILL but can"t be catch, so don't need add it
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+
+		logger.Info("Shutdown Server ...")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		select {
+		case <-ctx.Done():
+			logger.Infoln("timeout of 5 seconds.")
 		}
+
+		_ = serviceCtx.Stop()
+		logger.Info("Server exited")
 	},
 }
 
