@@ -67,13 +67,17 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 
 	if countPub == 0 {
 		sqlRaw := "CREATE PUBLICATION ditto FOR ALL TABLES;"
+		sqlTable := "FOR ALL TABLES"
+		sqlPublish := ""
+
 		if p.tableNames != "" {
 			var tableNames []string
 			if err = json.Unmarshal([]byte(p.tableNames), &tableNames); err == nil {
-				sqlRaw = fmt.Sprintf("CREATE PUBLICATION ditto FOR TABLE %s;", strings.Join(tableNames, ", "))
+				sqlTable = fmt.Sprintf("FOR TABLE %s", strings.Join(tableNames, ", "))
 			}
 		}
 
+		sqlRaw = fmt.Sprintf("CREATE PUBLICATION ditto %s %s;", sqlTable, sqlPublish)
 		result := pubCon.Exec(context.Background(), sqlRaw)
 		_, err = result.ReadAll()
 		if err != nil {
