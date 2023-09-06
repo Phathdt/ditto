@@ -9,14 +9,15 @@ import (
 	"ditto/shared/component/watermillapp"
 	"encoding/binary"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/goccy/go-json"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/namsral/flag"
 	sctx "github.com/viettranx/service-context"
-	"sync"
-	"time"
 )
 
 type Parser interface {
@@ -56,10 +57,15 @@ func (l *listener) Process() error {
 	flag.StringVar(&topicMappingRaw, "topic_mapping", "", "mapping topic")
 
 	flag.Parse()
+
+	fmt.Printf("tableFilterRaw = %+v\n", tableFilterRaw)
+
 	tableFilter := make(map[string][]string)
 	if err := json.Unmarshal([]byte(tableFilterRaw), &tableFilter); err != nil {
 		return err
 	}
+
+	fmt.Printf("tableFilter = %+v\n", tableFilter)
 
 	topicMapping := make(map[string]string)
 	if err := json.Unmarshal([]byte(topicMappingRaw), &topicMapping); err != nil {

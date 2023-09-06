@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/goccy/go-json"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,13 +19,13 @@ type PgxComp interface {
 }
 
 type pgxc struct {
-	id       string
-	dbDsn    string
-	tableMap map[string][]string
-	logger   sctx.Logger
-	conn     *pgconn.PgConn
-	sysident pglogrepl.IdentifySystemResult
-	lsn      pglogrepl.LSN
+	id         string
+	dbDsn      string
+	tableNames string
+	logger     sctx.Logger
+	conn       *pgconn.PgConn
+	sysident   pglogrepl.IdentifySystemResult
+	lsn        pglogrepl.LSN
 }
 
 func New(id string) *pgxc {
@@ -37,6 +38,7 @@ func (p *pgxc) ID() string {
 
 func (p *pgxc) InitFlags() {
 	flag.StringVar(&p.dbDsn, "db_dsn", "postgres://username:password@localhost:5432/database_name", "database dsn")
+	flag.StringVar(&p.tableNames, "table_names", "", "table watch, blank for all table")
 }
 
 func (p *pgxc) Activate(sc sctx.ServiceContext) error {
@@ -64,7 +66,15 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 	}
 
 	if countPub == 0 {
-		result := pubCon.Exec(context.Background(), "CREATE PUBLICATION ditto FOR ALL TABLES;")
+		sqlRaw := "CREATE PUBLICATION ditto FOR ALL TABLES;"
+		if p.tableNames != "" {
+			var tableNames []string
+			if err = json.Unmarshal([]byte(p.tableNames), &tableNames); err == nil {
+				sqlRaw = fmt.Sprintf("CREATE PUBLICATION ditto FOR TABLE %s;", strings.Join(tableNames, ", "))
+			}
+		}
+
+		result := pubCon.Exec(context.Background(), sqlRaw)
 		_, err = result.ReadAll()
 		if err != nil {
 			return err
