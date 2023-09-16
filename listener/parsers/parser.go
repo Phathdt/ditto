@@ -100,6 +100,8 @@ func (p *BinaryParser) ParseWalMessage(msg []byte, tx *models.WalTransaction) er
 
 	case common.TypeMsgType:
 		logrus.Debugln("type message was received")
+	case common.TMsgType:
+		logrus.Debugln("t message was received")
 	case common.InsertMsgType:
 		insert := p.getInsertMsg()
 

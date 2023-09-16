@@ -32,6 +32,8 @@ const (
 	// TypeMsgType common message type.
 	TypeMsgType byte = 'Y'
 
+	TMsgType byte = 'T'
+
 	// NullDataType common NULL data type.
 	NullDataType byte = 'n'
 
