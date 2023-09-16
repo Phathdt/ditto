@@ -165,7 +165,7 @@ func (p *BinaryParser) ParseWalMessage(msg []byte, tx *models.WalTransaction) er
 
 		tx.Actions = append(tx.Actions, action)
 	default:
-		return fmt.Errorf("%w : %s %s", errorx.ErrUnknownMessageType, []byte{p.msgType}, msg)
+		return fmt.Errorf("%w : %s %s", errorx.ErrUnknownMessageType, []byte{p.msgType}, string(msg))
 	}
 	return nil
 }
