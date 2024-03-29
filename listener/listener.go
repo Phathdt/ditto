@@ -6,9 +6,9 @@ import (
 	"ditto/models"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
-	"ditto/shared/component/watermillapp"
 	"encoding/binary"
 	"fmt"
+	"github.com/phathdt/service-context/component/natspub"
 	"sync"
 	"time"
 
@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/namsral/flag"
-	sctx "github.com/viettranx/service-context"
+	sctx "github.com/phathdt/service-context"
 )
 
 type Parser interface {
@@ -31,14 +31,14 @@ type listener struct {
 	parser    Parser
 	mu        sync.RWMutex
 	lsn       pglogrepl.LSN
-	publisher watermillapp.Publisher
+	publisher natspub.Component
 }
 
 func New(sc sctx.ServiceContext) *listener {
 	conn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetConn()
 	sysident := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetIdentity()
 	lsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetLsn()
-	publisher := sc.MustGet(common.KeyCompNatsPub).(watermillapp.Publisher)
+	publisher := sc.MustGet(common.KeyCompNatsPub).(natspub.Component)
 	logger := sc.Logger("global")
 
 	parser := parsers.NewBinaryParser(binary.BigEndian)

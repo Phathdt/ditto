@@ -1,19 +1,18 @@
 package cmd
 
 import (
-	"context"
 	"ditto/listener"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
-	"ditto/shared/component/watermillapp/natspub"
 	"fmt"
+	"github.com/phathdt/service-context/component/natspub"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	sctx "github.com/phathdt/service-context"
 	"github.com/spf13/cobra"
-	sctx "github.com/viettranx/service-context"
 )
 
 const (
@@ -25,7 +24,7 @@ func newServiceCtx() sctx.ServiceContext {
 	return sctx.NewServiceContext(
 		sctx.WithName(serviceName),
 		sctx.WithComponent(pgxc.New(common.KeyCompPgx)),
-		sctx.WithComponent(natspub.NewNatsPub(common.KeyCompNatsPub)),
+		sctx.WithComponent(natspub.New(common.KeyCompNatsPub)),
 	)
 }
 
@@ -37,7 +36,7 @@ var rootCmd = &cobra.Command{
 
 		logger := sctx.GlobalLogger().GetLogger("service")
 
-		time.Sleep(time.Second * 5)
+		time.Sleep(time.Second * 1)
 
 		if err := serviceCtx.Load(); err != nil {
 			logger.Fatal(err)
@@ -51,24 +50,10 @@ var rootCmd = &cobra.Command{
 			}
 		}()
 
-		// Wait for interrupt signal to gracefully shutdown the server with
-		// a timeout of 5 seconds.
+		// gracefully shutdown
 		quit := make(chan os.Signal)
-		// kill (no param) default send syscanll.SIGTERM
-		// kill -2 is syscall.SIGINT
-		// kill -9 is syscall. SIGKILL but can"t be catch, so don't need add it
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
-
-		logger.Info("Shutdown Server ...")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		select {
-		case <-ctx.Done():
-			logger.Infoln("timeout of 5 seconds.")
-		}
 
 		_ = serviceCtx.Stop()
 		logger.Info("Server exited")

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	sctx "github.com/viettranx/service-context"
+	sctx "github.com/phathdt/service-context"
 	"strings"
 )
 
