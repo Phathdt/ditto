@@ -133,7 +133,6 @@ func (l *listener) Process() error {
 			if tx.CommitTime != nil {
 				events := tx.CreateEventsWithFilter(tableFilter)
 				for _, event := range events {
-					fmt.Println(">>>>>>>>>>>>>>>>>>>")
 					if err = l.publisher.Publish(event.SubjectName(topicMapping), event); err != nil {
 						l.logger.Errorln(err)
 					}
