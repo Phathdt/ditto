@@ -1,4 +1,4 @@
-FROM golang:1.21.0-alpine as builder
+FROM golang:1.24.1-alpine as builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -6,7 +6,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ditto ./main.go
 
-FROM alpine:3.18
+FROM alpine:3.21
 WORKDIR /app
 RUN chown nobody:nobody /app
 USER nobody:nobody
