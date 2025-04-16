@@ -11,22 +11,26 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type RedisComp struct {
+type RedisComp interface {
+	GetClient() *redis.Client
+}
+
+type redisComp struct {
 	client *redis.Client
 	url    string
 }
 
 func New(key string, dsn string) sctx.Component {
-	return &RedisComp{
+	return &redisComp{
 		url: "redis://localhost:6379",
 	}
 }
 
-func (r *RedisComp) ID() string {
+func (r *redisComp) ID() string {
 	return common.KeyCompRedis
 }
 
-func (r *RedisComp) InitFlags() {
+func (r *redisComp) InitFlags() {
 	flag.StringVar(
 		&r.url,
 		"redis-url",
@@ -35,7 +39,7 @@ func (r *RedisComp) InitFlags() {
 	)
 }
 
-func (r *RedisComp) Activate(sc sctx.ServiceContext) error {
+func (r *redisComp) Activate(sc sctx.ServiceContext) error {
 	opts, err := redis.ParseURL(r.url)
 	if err != nil {
 		return fmt.Errorf("parse redis url failed: %w", err)
@@ -55,10 +59,10 @@ func (r *RedisComp) Activate(sc sctx.ServiceContext) error {
 	return nil
 }
 
-func (r *RedisComp) Stop() error {
+func (r *redisComp) Stop() error {
 	return r.client.Close()
 }
 
-func (r *RedisComp) GetClient() *redis.Client {
+func (r *redisComp) GetClient() *redis.Client {
 	return r.client
 }

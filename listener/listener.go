@@ -49,7 +49,7 @@ func New(sc sctx.ServiceContext) *listener {
 	conn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetConn()
 	sysident := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetIdentity()
 	lsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetLsn()
-	publisher := sc.MustGet(common.KeyCompRedis).(*redisc.RedisComp).GetClient()
+	publisher := sc.MustGet(common.KeyCompRedis).(redisc.RedisComp).GetClient()
 	logger := sc.Logger("global")
 	dbDsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetDsn()
 
