@@ -1,8 +1,10 @@
-package redis
+package redisc
 
 import (
 	"context"
+	"ditto/models"
 	"ditto/shared/common"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"time"
@@ -12,7 +14,7 @@ import (
 )
 
 type RedisComp interface {
-	GetClient() *redis.Client
+	Publish(topic string, event models.Event) error
 }
 
 type redisComp struct {
@@ -63,6 +65,12 @@ func (r *redisComp) Stop() error {
 	return r.client.Close()
 }
 
-func (r *redisComp) GetClient() *redis.Client {
-	return r.client
+func (r *redisComp) Publish(topic string, event models.Event) error {
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal event failed: %w", err)
+	}
+
+	cmd := r.client.LPush(context.Background(), topic, eventJSON)
+	return cmd.Err()
 }

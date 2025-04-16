@@ -4,7 +4,7 @@ import (
 	"ditto/listener"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
-	"ditto/shared/component/redis"
+	"ditto/shared/component/redisc"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,7 +24,7 @@ func newServiceCtx() sctx.ServiceContext {
 	return sctx.NewServiceContext(
 		sctx.WithName(serviceName),
 		sctx.WithComponent(pgxc.New(common.KeyCompPgx)),
-		sctx.WithComponent(redis.New(common.KeyCompRedis, "")),
+		sctx.WithComponent(redisc.New(common.KeyCompRedis, "")),
 	)
 }
 

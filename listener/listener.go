@@ -6,9 +6,8 @@ import (
 	"ditto/models"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
-	redisc "ditto/shared/component/redis"
+	"ditto/shared/component/redisc"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -22,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	sctx "github.com/phathdt/service-context"
-	"github.com/redis/go-redis/v9"
 )
 
 type Parser interface {
@@ -41,7 +39,7 @@ type listener struct {
 	parser    Parser
 	mu        sync.RWMutex
 	lsn       pglogrepl.LSN
-	publisher *redis.Client
+	publisher redisc.RedisComp
 	dbDsn     string
 }
 
@@ -49,7 +47,7 @@ func New(sc sctx.ServiceContext) *listener {
 	conn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetConn()
 	sysident := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetIdentity()
 	lsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetLsn()
-	publisher := sc.MustGet(common.KeyCompRedis).(redisc.RedisComp).GetClient()
+	publisher := sc.MustGet(common.KeyCompRedis).(redisc.RedisComp)
 	logger := sc.Logger("global")
 	dbDsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetDsn()
 
@@ -137,16 +135,8 @@ func (l *listener) Process() error {
 				events := tx.CreateEventsWithWatchList(cfg.WatchList)
 				for _, event := range events {
 					topic := buildTopic(cfg.PrefixWatchList, event.Table, cfg.WatchList)
-					// Serialize event to JSON
-					eventJSON, err := json.Marshal(event)
-					if err != nil {
-						l.logger.Errorln("Failed to marshal event:", err)
-						continue
-					}
-					// Push JSON string to Redis
-					cmd := l.publisher.LPush(context.Background(), topic, eventJSON)
-					if err := cmd.Err(); err != nil {
-						l.logger.Errorln(err)
+					if err := l.publisher.Publish(topic, event); err != nil {
+						l.logger.Errorln("Failed to publish event:", err)
 					}
 				}
 				tx.Clear()
