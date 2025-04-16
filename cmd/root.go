@@ -4,8 +4,8 @@ import (
 	"ditto/listener"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
+	"ditto/shared/component/redis"
 	"fmt"
-	"github.com/phathdt/service-context/component/natspub"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,7 +24,7 @@ func newServiceCtx() sctx.ServiceContext {
 	return sctx.NewServiceContext(
 		sctx.WithName(serviceName),
 		sctx.WithComponent(pgxc.New(common.KeyCompPgx)),
-		sctx.WithComponent(natspub.New(common.KeyCompNatsPub)),
+		sctx.WithComponent(redis.New(common.KeyCompRedis, "")),
 	)
 }
 
@@ -51,7 +51,7 @@ var rootCmd = &cobra.Command{
 		}()
 
 		// gracefully shutdown
-		quit := make(chan os.Signal)
+		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 

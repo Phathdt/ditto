@@ -260,3 +260,50 @@ func inArray(arr []string, value string) bool {
 
 	return false
 }
+
+// WatchConfig for table watch list
+type WatchConfig struct {
+	Action  string `yaml:"action"`
+	Mapping string `yaml:"mapping"`
+}
+
+func (w *WalTransaction) CreateEventsWithWatchList(watchList map[string]WatchConfig) []Event {
+	var events []Event
+	for _, item := range w.Actions {
+		dataOld := make(map[string]any)
+		for _, val := range item.OldColumns {
+			dataOld[val.Name] = val.value
+		}
+		data := make(map[string]any)
+		for _, val := range item.NewColumns {
+			data[val.Name] = val.value
+		}
+		event := Event{
+			ID:        uuid.New(),
+			Schema:    item.Schema,
+			Table:     item.Table,
+			Action:    item.Kind.string(),
+			DataOld:   dataOld,
+			Data:      data,
+			EventTime: *w.CommitTime,
+		}
+		cfg, ok := watchList[item.Table]
+		if !ok {
+			continue
+		}
+		actions := []string{}
+		if cfg.Action != "" {
+			for _, a := range strings.Split(cfg.Action, ",") {
+				a = strings.TrimSpace(a)
+				if a != "" {
+					actions = append(actions, a)
+				}
+			}
+		}
+		if len(actions) == 0 || inArray(actions, item.Kind.string()) {
+			events = append(events, event)
+			continue
+		}
+	}
+	return events
+}

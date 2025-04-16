@@ -38,24 +38,39 @@ the name of the database and the name of the table `prefix_schema_table`.
 
 Messages are published to the broker at least once!
 
-### Filter configuration example
+### Filter and Topic Mapping Configuration (YAML)
 
-```bash
-TABLE_FILTER={"trades":["insert","update"]}
+Configuration is now managed via a `config.yml` file at the project root. Example:
+
+```yaml
+watch_list:
+  trades:
+    action: insert,update   # blank or empty for all actions (insert, update, delete)
+    mapping: transactions   # blank or empty to use the table name as topic (e.g., trades)
+prefix_watch_list: my_prefix # empty means no prefix
 ```
-This filter means that we only process events occurring with the `trades` table,
-and in particular `insert` and `update` data.
 
-### Topic mapping
-By default, output NATS topic name consist of prefix, DB schema, and DB table name,
-but if you want to send all update in one topic you should be configured the topic map:
-```bash
-TOPIC_MAPPING={"trades":"transactions"}
+- The service will watch the `trades` table, filter for `insert` and `update` actions, and publish to the topic `my_prefix.transactions`.
+- If `action` is blank, all actions are allowed.
+- If `mapping` is blank, the table name is used as the topic.
+- The topic is built as `{prefix_watch_list}.{mapping}` (if prefix is set).
+
+### Example config.yml
+
+```yaml
+watch_list:
+  trades:
+    action: insert,update
+    mapping: transactions
+  users:
+    action: # all actions
+    mapping: # topic will be 'users'
+prefix_watch_list: my_prefix
 ```
 
 ## DB setting
 You must make the following settings in the db configuration (postgresql.conf)
-* wal_level >= “logical”
+* wal_level >= "logical"
 * max_replication_slots >= 1
 
 The publication & slot created automatically when the service starts (for all tables and all actions).
@@ -71,24 +86,17 @@ Notes:
    [#SQL-ALTERTABLE-REPLICA-IDENTITY](https://www.postgresql.org/docs/current/sql-altertable.html#SQL-ALTERTABLE-REPLICA-IDENTITY)
 
 ## Service configuration
+
+Environment variables for DB and NATS connection are still required, but filtering and topic mapping are now handled by `config.yml`.
+
 ```bash
-DB_DSN=postgres://postgres:password@localhost:5432/db_name?replication=database
-## output plugin (-output_plugin)
+**DB_DSN=postgres://postgres:password@localhost:5432/db_name?replication=database
 OUTPUT_PLUGIN="pgoutput"
-
-## publication name (-publication_name)
 PUBLICATION_NAME=ditto
-
-## slot name replica (-slot_name)
 SLOT_NAME=ditto
-
-NATS_PUB_URI="nats://localhost:4222"
-
-TABLE_FILTER={"trades":["insert"]}
-
-TOPIC_MAPPING={"trades":"transactions"}
-
+NATS_PUB_URI="nats://localhost:4222"**
 ```
+
 ## TODO
 - [ ] update condition filter
 - [ ] refactor code listener

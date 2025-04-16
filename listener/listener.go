@@ -6,22 +6,32 @@ import (
 	"ditto/models"
 	"ditto/shared/common"
 	"ditto/shared/component/pgxc"
+	redisc "ditto/shared/component/redis"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
-	"github.com/phathdt/service-context/component/natspub"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/goccy/go-json"
+	"gopkg.in/yaml.v3"
+
 	"github.com/jackc/pglogrepl"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
-	"github.com/namsral/flag"
 	sctx "github.com/phathdt/service-context"
+	"github.com/redis/go-redis/v9"
 )
 
 type Parser interface {
 	ParseWalMessage([]byte, *models.WalTransaction) error
+}
+
+type Config struct {
+	WatchList       map[string]models.WatchConfig `yaml:"watch_list"`
+	PrefixWatchList string                        `yaml:"prefix_watch_list"`
 }
 
 type listener struct {
@@ -31,19 +41,21 @@ type listener struct {
 	parser    Parser
 	mu        sync.RWMutex
 	lsn       pglogrepl.LSN
-	publisher natspub.Component
+	publisher *redis.Client
+	dbDsn     string
 }
 
 func New(sc sctx.ServiceContext) *listener {
 	conn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetConn()
 	sysident := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetIdentity()
 	lsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetLsn()
-	publisher := sc.MustGet(common.KeyCompNatsPub).(natspub.Component)
+	publisher := sc.MustGet(common.KeyCompRedis).(*redisc.RedisComp).GetClient()
 	logger := sc.Logger("global")
+	dbDsn := sc.MustGet(common.KeyCompPgx).(pgxc.PgxComp).GetDsn()
 
 	parser := parsers.NewBinaryParser(binary.BigEndian)
 
-	return &listener{conn: conn, sysident: sysident, lsn: lsn, logger: logger, parser: parser, publisher: publisher}
+	return &listener{conn: conn, sysident: sysident, lsn: lsn, logger: logger, parser: parser, publisher: publisher, dbDsn: dbDsn}
 }
 
 func (l *listener) Process() error {
@@ -51,24 +63,17 @@ func (l *listener) Process() error {
 	standbyMessageTimeout := time.Second * 10
 	nextStandbyMessageDeadline := time.Now().Add(standbyMessageTimeout)
 
-	var tableFilterRaw string
-	var topicMappingRaw string
-	flag.StringVar(&tableFilterRaw, "table_filter", "", "filter messages by table")
-	flag.StringVar(&topicMappingRaw, "topic_mapping", "", "mapping topic")
-
-	flag.Parse()
-
-	fmt.Printf("tableFilterRaw = %+v\n", tableFilterRaw)
-
-	tableFilter := make(map[string][]string)
-	if err := json.Unmarshal([]byte(tableFilterRaw), &tableFilter); err != nil {
+	f, err := os.Open("config.yml")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var cfg Config
+	if err := yaml.NewDecoder(f).Decode(&cfg); err != nil {
 		return err
 	}
 
-	fmt.Printf("tableFilter = %+v\n", tableFilter)
-
-	topicMapping := make(map[string]string)
-	if err := json.Unmarshal([]byte(topicMappingRaw), &topicMapping); err != nil {
+	if err := l.createPublicationFromConfig(cfg); err != nil {
 		return err
 	}
 
@@ -120,24 +125,30 @@ func (l *listener) Process() error {
 			xld, err := pglogrepl.ParseXLogData(msg.Data[1:])
 			if err != nil {
 				l.logger.Fatalln("ParseXLogData failed:", err)
-
 				continue
 			}
 
 			if err = l.parser.ParseWalMessage(xld.WALData, tx); err != nil {
 				l.logger.Fatalln("ParseWalMessage failed:", err)
-
 				continue
 			}
 
 			if tx.CommitTime != nil {
-				events := tx.CreateEventsWithFilter(tableFilter)
+				events := tx.CreateEventsWithWatchList(cfg.WatchList)
 				for _, event := range events {
-					if err = l.publisher.Publish(event.SubjectName(topicMapping), event); err != nil {
+					topic := buildTopic(cfg.PrefixWatchList, event.Table, cfg.WatchList)
+					// Serialize event to JSON
+					eventJSON, err := json.Marshal(event)
+					if err != nil {
+						l.logger.Errorln("Failed to marshal event:", err)
+						continue
+					}
+					// Push JSON string to Redis
+					cmd := l.publisher.LPush(context.Background(), topic, eventJSON)
+					if err := cmd.Err(); err != nil {
 						l.logger.Errorln(err)
 					}
 				}
-
 				tx.Clear()
 			}
 
@@ -146,13 +157,22 @@ func (l *listener) Process() error {
 					l.logger.Errorf("acknowledge wal message: %w", err)
 					continue
 				}
-
 				l.logger.Infof("lsn = %d ack wal msg", l.readLSN())
 			}
-
 			clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 		}
 	}
+}
+
+func buildTopic(prefix, table string, watchList map[string]models.WatchConfig) string {
+	mapping := table
+	if w, ok := watchList[table]; ok && w.Mapping != "" {
+		mapping = w.Mapping
+	}
+	if prefix != "" {
+		return prefix + "." + mapping
+	}
+	return mapping
 }
 
 // SendStandbyStatus sends a `StandbyStatus` object with the current RestartLSN value to the server.
@@ -191,4 +211,30 @@ func (l *listener) setLSN(lsn pglogrepl.LSN) {
 	defer l.mu.Unlock()
 
 	l.lsn = lsn
+}
+
+func (l *listener) createPublicationFromConfig(cfg Config) error {
+	sqlDsn := strings.ReplaceAll(l.dbDsn, "replication=database", "")
+	sqlConn, err := pgx.Connect(context.Background(), sqlDsn)
+	if err != nil {
+		return err
+	}
+	defer sqlConn.Close(context.Background())
+
+	tableNames := make([]string, 0, len(cfg.WatchList))
+	for table := range cfg.WatchList {
+		tableNames = append(tableNames, table)
+	}
+
+	sqlTable := "FOR ALL TABLES"
+	if len(tableNames) > 0 {
+		sqlTable = "FOR TABLE " + strings.Join(tableNames, ", ")
+	}
+	sqlRaw := "CREATE PUBLICATION ditto " + sqlTable + ";"
+	_, err = sqlConn.Exec(context.Background(), sqlRaw)
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		return err
+	}
+	l.logger.Infoln("create publication ditto")
+	return nil
 }

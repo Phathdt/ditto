@@ -4,28 +4,28 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/goccy/go-json"
+	"strings"
+
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	sctx "github.com/phathdt/service-context"
-	"strings"
 )
 
 type PgxComp interface {
 	GetConn() *pgconn.PgConn
 	GetIdentity() pglogrepl.IdentifySystemResult
 	GetLsn() pglogrepl.LSN
+	GetDsn() string
 }
 
 type pgxc struct {
-	id         string
-	dbDsn      string
-	tableNames string
-	logger     sctx.Logger
-	conn       *pgconn.PgConn
-	sysident   pglogrepl.IdentifySystemResult
-	lsn        pglogrepl.LSN
+	id       string
+	dbDsn    string
+	logger   sctx.Logger
+	conn     *pgconn.PgConn
+	sysident pglogrepl.IdentifySystemResult
+	lsn      pglogrepl.LSN
 }
 
 func New(id string) *pgxc {
@@ -38,7 +38,6 @@ func (p *pgxc) ID() string {
 
 func (p *pgxc) InitFlags() {
 	flag.StringVar(&p.dbDsn, "db_dsn", "postgres://username:password@localhost:5432/database_name", "database dsn")
-	flag.StringVar(&p.tableNames, "table_names", "", "table watch, blank for all table")
 }
 
 func (p *pgxc) Activate(sc sctx.ServiceContext) error {
@@ -55,7 +54,7 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 	}
 
 	var countPub int
-	if err = queryConn.QueryRow(context.Background(), "SELECT COUNT(*) from  pg_publication WHERE pubname = 'ditto'").
+	if err = queryConn.QueryRow(context.Background(), "SELECT COUNT(*) from pg_publication WHERE pubname = 'ditto'").
 		Scan(&countPub); err != nil {
 		return err
 	}
@@ -63,27 +62,6 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 	pubCon, err := pgconn.Connect(context.Background(), p.dbDsn)
 	if err != nil {
 		return err
-	}
-
-	if countPub == 0 {
-		sqlRaw := "CREATE PUBLICATION ditto FOR ALL TABLES;"
-		sqlTable := "FOR ALL TABLES"
-		sqlPublish := ""
-
-		if p.tableNames != "" {
-			var tableNames []string
-			if err = json.Unmarshal([]byte(p.tableNames), &tableNames); err == nil {
-				sqlTable = fmt.Sprintf("FOR TABLE %s", strings.Join(tableNames, ", "))
-			}
-		}
-
-		sqlRaw = fmt.Sprintf("CREATE PUBLICATION ditto %s %s;", sqlTable, sqlPublish)
-		result := pubCon.Exec(context.Background(), sqlRaw)
-		_, err = result.ReadAll()
-		if err != nil {
-			return err
-		}
-		p.logger.Infoln("create publication ditto")
 	}
 
 	pluginArguments := []string{"proto_version '1'", "publication_names 'ditto'"}
@@ -99,10 +77,6 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 		_, err = pglogrepl.CreateReplicationSlot(context.Background(), pubCon, slotName, "pgoutput", pglogrepl.CreateReplicationSlotOptions{Temporary: false})
 		if err != nil {
 			return fmt.Errorf("CreateReplicationSlot failed: %w", err)
-		}
-
-		if err != nil {
-			return err
 		}
 	}
 
@@ -144,4 +118,8 @@ func (p *pgxc) GetIdentity() pglogrepl.IdentifySystemResult {
 
 func (p *pgxc) GetLsn() pglogrepl.LSN {
 	return p.lsn
+}
+
+func (p *pgxc) GetDsn() string {
+	return p.dbDsn
 }
