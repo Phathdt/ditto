@@ -13,12 +13,11 @@ on:
         type: string
 
 jobs:
-  build-image:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.new_version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
       - name: Use manually specified version
         id: version
         run: |
@@ -26,10 +25,12 @@ jobs:
           echo "Using manually specified version: $MANUAL_VERSION"
           echo "new_version=${MANUAL_VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-        with:
-          platforms: 'arm64,amd64'
+  build-amd64:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Login Docker Hub
         uses: docker/login-action@v2
@@ -41,22 +42,81 @@ jobs:
         uses: docker/setup-buildx-action@v2
         id: buildx
 
-      - name: Build and Push Docker Image
+      - name: Build and Push AMD64 Image
         uses: docker/build-push-action@v3
-        id: docker_build
         with:
           context: ./
           file: ./Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ditto:latest,${{ secrets.DOCKERHUB_USERNAME }}/ditto:${{ steps.version.outputs.new_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ditto:amd64-${{ needs.prepare.outputs.version }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+  build-arm64:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: 'arm64'
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        id: buildx
+
+      - name: Build and Push ARM64 Image
+        uses: docker/build-push-action@v3
+        with:
+          context: ./
+          file: ./Dockerfile
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          platforms: linux/arm64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ditto:arm64-${{ needs.prepare.outputs.version }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+  create-manifest:
+    needs: [prepare, build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+      - name: Create and Push Manifest
+        run: |
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/ditto:${{ needs.prepare.outputs.version }} \
+            --amend ${{ secrets.DOCKERHUB_USERNAME }}/ditto:amd64-${{ needs.prepare.outputs.version }} \
+            --amend ${{ secrets.DOCKERHUB_USERNAME }}/ditto:arm64-${{ needs.prepare.outputs.version }}
+
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/ditto:latest \
+            --amend ${{ secrets.DOCKERHUB_USERNAME }}/ditto:amd64-${{ needs.prepare.outputs.version }} \
+            --amend ${{ secrets.DOCKERHUB_USERNAME }}/ditto:arm64-${{ needs.prepare.outputs.version }}
+
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/ditto:${{ needs.prepare.outputs.version }}
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/ditto:latest
 
       - name: Create Git Tag
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git tag -a v${{ steps.version.outputs.new_version }} -m "Release version ${{ steps.version.outputs.new_version }}"
-          git push origin v${{ steps.version.outputs.new_version }}
+          git tag -a v${{ needs.prepare.outputs.version }} -m "Release version ${{ needs.prepare.outputs.version }}"
+          git push origin v${{ needs.prepare.outputs.version }}
