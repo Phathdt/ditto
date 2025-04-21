@@ -61,7 +61,7 @@ func (l *listener) Process() error {
 	standbyMessageTimeout := time.Second * 10
 	nextStandbyMessageDeadline := time.Now().Add(standbyMessageTimeout)
 
-	f, err := os.Open("/config/config.yml")
+	f, err := os.Open("config/config.yml")
 	if err != nil {
 		return err
 	}
