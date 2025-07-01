@@ -120,6 +120,9 @@ DB_DSN=postgresql://postgres:password@host.docker.internal:5432/ditto_db?replica
 # Redis connection
 REDIS_URL=redis://host.docker.internal:6379
 
+# Replication slot name (must be unique per PostgreSQL instance)
+SLOT_NAME=ditto
+
 # Optional: Log level
 LOG_LEVEL=info
 
@@ -147,6 +150,18 @@ else
             # Fix localhost
             sed -i.bak 's/localhost/host.docker.internal/g' .env
             echo -e "${GREEN}✅ Fixed .env file (backup saved as .env.backup)${NC}"
+
+            # Check if SLOT_NAME is set and suggest unique name based on database
+            if ! grep -q "SLOT_NAME=" .env 2>/dev/null; then
+                # Extract database name from DSN
+                DB_NAME=$(grep "DB_DSN=" .env | sed 's/.*\/\([^?]*\).*/\1/' | head -1)
+                if [[ -n "$DB_NAME" && "$DB_NAME" != "DB_DSN" ]]; then
+                    echo "" >> .env
+                    echo "# Replication slot name (must be unique per PostgreSQL instance)" >> .env
+                    echo "SLOT_NAME=ditto_${DB_NAME}" >> .env
+                    echo -e "${GREEN}✅ Added unique SLOT_NAME: ditto_${DB_NAME}${NC}"
+                fi
+            fi
         else
             echo -e "${YELLOW}⚠️  Please manually update .env file before running${NC}"
             echo "The container may not be able to connect to host services."

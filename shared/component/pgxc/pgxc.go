@@ -22,6 +22,7 @@ type PgxComp interface {
 type pgxc struct {
 	id       string
 	dbDsn    string
+	slotName string
 	logger   sctx.Logger
 	conn     *pgconn.PgConn
 	sysident pglogrepl.IdentifySystemResult
@@ -38,6 +39,7 @@ func (p *pgxc) ID() string {
 
 func (p *pgxc) InitFlags() {
 	flag.StringVar(&p.dbDsn, "db_dsn", "postgres://username:password@localhost:5432/database_name", "database dsn")
+	flag.StringVar(&p.slotName, "slot_name", "ditto", "replication slot name")
 }
 
 func (p *pgxc) Activate(sc sctx.ServiceContext) error {
@@ -66,10 +68,14 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 
 	pluginArguments := []string{"proto_version '1'", "publication_names 'ditto'"}
 
-	slotName := "ditto"
+	// Use configurable slot name, default to "ditto" if not set
+	slotName := p.slotName
+	if slotName == "" {
+		slotName = "ditto"
+	}
 
 	var countSlot int
-	if err = queryConn.QueryRow(context.Background(), "SELECT COUNT(*) FROM pg_replication_slots  where slot_name = 'ditto'").Scan(&countSlot); err != nil {
+	if err = queryConn.QueryRow(context.Background(), "SELECT COUNT(*) FROM pg_replication_slots where slot_name = $1", slotName).Scan(&countSlot); err != nil {
 		return err
 	}
 
@@ -82,7 +88,7 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 
 	var restartLSNStr string
 
-	if err = queryConn.QueryRow(context.Background(), "SELECT restart_lsn FROM pg_replication_slots WHERE slot_name= 'ditto';").
+	if err = queryConn.QueryRow(context.Background(), "SELECT restart_lsn FROM pg_replication_slots WHERE slot_name = $1", slotName).
 		Scan(&restartLSNStr); err != nil {
 		return err
 	}
