@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  ditto:
+    image: phathdt379/ditto:latest
+    environment:
+      - DB_DSN=postgresql://postgres:password@postgres:5432/ditto_db?replication=database
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+      - APP_ENV=dev
+    volumes:
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ditto_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_replication_slots=4
+      -c max_wal_senders=4
+      -c shared_preload_libraries=pgoutput
+      -c log_statement=all
+      -c log_destination=stderr
+      -c logging_collector=on
+      -c log_min_messages=info
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Optional: Redis CLI for debugging
+  redis-cli:
+    image: redis:7-alpine
+    depends_on:
+      - redis
+    command: redis-cli -h redis monitor
+    profiles:
+      - debug
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: ditto_network

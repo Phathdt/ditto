@@ -28,8 +28,10 @@ type Parser interface {
 }
 
 type Config struct {
-	WatchList       map[string]models.WatchConfig `yaml:"watch_list"`
-	PrefixWatchList string                        `yaml:"prefix_watch_list"`
+	WatchList           map[string]models.WatchConfig `yaml:"watch_list"`
+	PrefixWatchList     string                        `yaml:"prefix_watch_list"`
+	PublicationStrategy string                        `yaml:"publication_strategy"` // "single" or "multiple"
+	PublicationPrefix   string                        `yaml:"publication_prefix"`   // prefix for multiple publications
 }
 
 type listener struct {
@@ -216,15 +218,178 @@ func (l *listener) createPublicationFromConfig(cfg Config) error {
 		tableNames = append(tableNames, table)
 	}
 
-	sqlTable := "FOR ALL TABLES"
-	if len(tableNames) > 0 {
-		sqlTable = "FOR TABLE " + strings.Join(tableNames, ", ")
+	fmt.Println("tableNames", tableNames)
+
+	// Default to single publication strategy
+	strategy := cfg.PublicationStrategy
+	if strategy == "" {
+		strategy = "single"
 	}
-	sqlRaw := "CREATE PUBLICATION ditto " + sqlTable + ";"
-	_, err = sqlConn.Exec(context.Background(), sqlRaw)
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return err
+
+	switch strategy {
+	case "single":
+		if err := l.ensurePublicationMatches(sqlConn, tableNames); err != nil {
+			return err
+		}
+		l.logger.Infoln("single publication ditto is ready")
+
+	case "multiple":
+		prefix := cfg.PublicationPrefix
+		if prefix == "" {
+			prefix = "ditto"
+		}
+		if err := l.ensureMultiplePublications(sqlConn, tableNames, prefix); err != nil {
+			return err
+		}
+		l.logger.Infoln("multiple publications are ready")
+
+	default:
+		return fmt.Errorf("unsupported publication strategy: %s", strategy)
 	}
-	l.logger.Infoln("create publication ditto")
+
+	return nil
+}
+
+func (l *listener) ensurePublicationMatches(conn *pgx.Conn, expectedTables []string) error {
+	publicationName := "ditto"
+
+	// Check if publication exists and get current tables
+	currentTables, err := l.getCurrentPublicationTables(conn, publicationName)
+	if err != nil {
+		return fmt.Errorf("failed to get current publication tables: %w", err)
+	}
+
+	// Compare expected vs current tables
+	if l.tablesMatch(expectedTables, currentTables) {
+		l.logger.Infof("publication %s already matches expected tables", publicationName)
+		return nil
+	}
+
+	l.logger.Infof("publication %s doesn't match expected tables, recreating...", publicationName)
+
+	// Drop existing publication
+	dropSQL := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s;", publicationName)
+	if _, err := conn.Exec(context.Background(), dropSQL); err != nil {
+		return fmt.Errorf("failed to drop publication: %w", err)
+	}
+
+	// Create new publication
+	var sqlTable string
+	if len(expectedTables) == 0 {
+		sqlTable = "FOR ALL TABLES"
+	} else {
+		sqlTable = "FOR TABLE " + strings.Join(expectedTables, ", ")
+	}
+
+	createSQL := fmt.Sprintf("CREATE PUBLICATION %s %s;", publicationName, sqlTable)
+	l.logger.Infof("creating publication with SQL: %s", createSQL)
+
+	if _, err := conn.Exec(context.Background(), createSQL); err != nil {
+		return fmt.Errorf("failed to create publication: %w", err)
+	}
+
+	l.logger.Infof("successfully recreated publication %s", publicationName)
+	return nil
+}
+
+func (l *listener) getCurrentPublicationTables(conn *pgx.Conn, publicationName string) ([]string, error) {
+	query := `
+		SELECT COALESCE(array_agg(t.tablename ORDER BY t.tablename), '{}') as tables
+		FROM pg_publication p
+		LEFT JOIN pg_publication_tables t ON p.pubname = t.pubname
+		WHERE p.pubname = $1
+		GROUP BY p.pubname;
+	`
+
+	var tables []string
+	err := conn.QueryRow(context.Background(), query, publicationName).Scan(&tables)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	// Filter out empty strings that might come from LEFT JOIN
+	var result []string
+	for _, table := range tables {
+		if table != "" {
+			result = append(result, table)
+		}
+	}
+
+	return result, nil
+}
+
+func (l *listener) tablesMatch(expected, current []string) bool {
+	if len(expected) != len(current) {
+		return false
+	}
+
+	// Create maps for comparison
+	expectedMap := make(map[string]bool)
+	for _, table := range expected {
+		expectedMap[table] = true
+	}
+
+	currentMap := make(map[string]bool)
+	for _, table := range current {
+		currentMap[table] = true
+	}
+
+	// Check if all expected tables are in current
+	for table := range expectedMap {
+		if !currentMap[table] {
+			return false
+		}
+	}
+
+	// Check if all current tables are in expected
+	for table := range currentMap {
+		if !expectedMap[table] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (l *listener) ensureMultiplePublications(conn *pgx.Conn, tables []string, prefix string) error {
+	for _, table := range tables {
+		publicationName := fmt.Sprintf("%s_%s", prefix, table)
+
+		// Check if publication exists for this table
+		currentTables, err := l.getCurrentPublicationTables(conn, publicationName)
+		if err != nil {
+			return fmt.Errorf("failed to get current publication tables for %s: %w", publicationName, err)
+		}
+
+		expectedTables := []string{table}
+
+		// Compare expected vs current tables
+		if l.tablesMatch(expectedTables, currentTables) {
+			l.logger.Infof("publication %s already matches expected table", publicationName)
+			continue
+		}
+
+		l.logger.Infof("publication %s doesn't match, recreating for table %s", publicationName, table)
+
+		// Drop existing publication
+		dropSQL := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s;", publicationName)
+		if _, err := conn.Exec(context.Background(), dropSQL); err != nil {
+			return fmt.Errorf("failed to drop publication %s: %w", publicationName, err)
+		}
+
+		// Create new publication for single table
+		createSQL := fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s;", publicationName, table)
+		l.logger.Infof("creating publication with SQL: %s", createSQL)
+
+		if _, err := conn.Exec(context.Background(), createSQL); err != nil {
+			return fmt.Errorf("failed to create publication %s: %w", publicationName, err)
+		}
+
+		l.logger.Infof("successfully created publication %s for table %s", publicationName, table)
+	}
+
 	return nil
 }

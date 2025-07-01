@@ -1,0 +1,34 @@
+# Example configuration for Ditto WAL listener
+
+# Strategy 1: Single Publication (Recommended for most cases)
+# All tables in one publication - simple and efficient
+publication_strategy: 'single' # or "multiple"
+publication_prefix: 'ditto' # only used for multiple strategy
+
+# Redis topic prefix for published events
+prefix_watch_list: 'events'
+
+# Tables to watch for changes
+watch_list:
+  deposit_events:
+    mapping: 'deposits' # custom topic name, optional
+  withdraw_events:
+    mapping: 'withdrawals' # custom topic name, optional
+  loan_events:
+    mapping: 'loans' # custom topic name, optional
+
+---
+# Strategy 2: Multiple Publications (For advanced use cases)
+# Each table gets its own publication - more flexible but complex
+publication_strategy: 'multiple'
+publication_prefix: 'ditto' # creates ditto_deposit_events, ditto_withdraw_events, etc.
+
+prefix_watch_list: 'events'
+
+watch_list:
+  deposit_events:
+    mapping: 'deposits'
+  withdraw_events:
+    mapping: 'withdrawals'
+  loan_events:
+    mapping: 'loans'

@@ -1,106 +1,370 @@
 # Ditto
 
-A service that helps implement the **Event-Driven architecture**.
+A service that helps implement the **Event-Driven architecture** by capturing PostgreSQL database changes and publishing them to message brokers.
 
-To maintain the consistency of data in the system, we will use **transactional messaging** -
-publishing events in a single transaction with a domain model change.
+To maintain the consistency of data in the system, we use **transactional messaging** - publishing events in a single transaction with a domain model change.
 
-The service allows you to subscribe to changes in the PostgreSQL database using its logical decoding capability
-and publish them to the NATS Streaming server.
+The service allows you to subscribe to changes in the PostgreSQL database using its logical decoding capability and publish them to Redis or other message brokers.
 
-## Logic of work
-To receive events about data changes in our PostgreSQL DB
-  we use the standard logic decoding module (**pgoutput**) This module converts
-changes read from the WAL into a logical replication protocol.
-  And we already consume all this information on our side.
-Then we filter out only the events we need and publish them in the queue
+## 🚀 Features
 
-### Event publishing
+- **Flexible Publication Strategies**: Single publication for all tables or individual publications per table
+- **Auto-sync Publications**: Automatically creates and manages PostgreSQL publications
+- **Redis Publishing**: Events published to Redis with configurable topics
+- **Table Mapping**: Custom topic names for different tables
+- **Real-time Processing**: Low-latency event processing using PostgreSQL WAL
+- **Configuration-driven**: YAML-based configuration for easy management
 
-As the message broker will be used is of your choice:
-NATS JetStream [`type=nats`]
+## 📋 Table of Contents
 
-Service publishes the following structure.
-The name of the topic for subscription to receive messages is formed from the prefix of the topic,
-the name of the database and the name of the table `prefix_schema_table`.
+- [Logic of Work](#logic-of-work)
+- [Event Publishing](#event-publishing)
+- [Configuration](#configuration)
+- [Publication Strategies](#publication-strategies)
+- [Database Setup](#database-setup)
+- [Environment Variables](#environment-variables)
+- [Usage](#usage)
+- [Tools & Scripts](#tools--scripts)
+- [Documentation](#documentation)
+- [Docker & CI/CD](#docker--cicd)
+
+## Logic of Work
+
+To receive events about data changes in our PostgreSQL DB, we use the standard logical decoding module (**pgoutput**). This module converts changes read from the WAL into a logical replication protocol, and we consume all this information on our side.
+
+Then we filter out only the events we need and publish them to Redis with configurable topics.
+
+## Event Publishing
+
+Service currently supports **Redis** as the message broker.
+
+The service publishes the following structure to Redis topics:
 
 ```go
 {
-	ID        uuid.UUID       # unique ID
+	ID        uuid.UUID       // unique ID
 	Schema    string
 	Table     string
-	Action    string
-	Data      map[string]any
-	DataOld   map[string]any  # old data (see DB-settings note #1)
-	EventTime time.Time       # commit time
+	Action    string          // insert, update, delete
+	Data      map[string]any  // new data
+	DataOld   map[string]any  // old data (for updates/deletes)
+	EventTime time.Time       // commit time
 }
 ```
 
-Messages are published to the broker at least once!
+**Topic Structure**: `{prefix_watch_list}.{mapping}`
 
-### Filter and Topic Mapping Configuration (YAML)
+Messages are published to the broker **at least once**!
 
-Configuration is now managed via a `config.yml` file at the project root. Example:
+## Configuration
 
-```yaml
-watch_list:
-  trades:
-    action: insert,update   # blank or empty for all actions (insert, update, delete)
-    mapping: transactions   # blank or empty to use the table name as topic (e.g., trades)
-prefix_watch_list: my_prefix # empty means no prefix
-```
-
-- The service will watch the `trades` table, filter for `insert` and `update` actions, and publish to the topic `my_prefix.transactions`.
-- If `action` is blank, all actions are allowed.
-- If `mapping` is blank, the table name is used as the topic.
-- The topic is built as `{prefix_watch_list}.{mapping}` (if prefix is set).
-
-### Example config.yml
+Configuration is managed via `config/config.yml` file:
 
 ```yaml
+# Publication strategy: "single" (default) or "multiple"
+publication_strategy: "single"
+publication_prefix: "ditto"        # used for multiple strategy
+
+# Redis topic prefix
+prefix_watch_list: "events"
+
+# Tables to watch
 watch_list:
-  trades:
-    action: insert,update
-    mapping: transactions
-  users:
-    action: # all actions
-    mapping: # topic will be 'users'
-prefix_watch_list: my_prefix
+  deposit_events:
+    mapping: "deposits"    # custom topic name (optional)
+  withdraw_events:
+    mapping: "withdrawals"
+  loan_events:
+    mapping: "loans"
 ```
 
-## DB setting
-You must make the following settings in the db configuration (postgresql.conf)
-* wal_level >= "logical"
-* max_replication_slots >= 1
+### Configuration Options
 
-The publication & slot created automatically when the service starts (for all tables and all actions).
-You can delete the default publication and create your own (name: _Ditto_) with the necessary filtering conditions, and then the filtering will occur at the database level and not at the application level.
+| Field | Description | Default |
+|-------|-------------|---------|
+| `publication_strategy` | "single" or "multiple" | "single" |
+| `publication_prefix` | Prefix for multiple publications | "ditto" |
+| `prefix_watch_list` | Redis topic prefix | "" |
+| `watch_list` | Tables to monitor | {} |
+| `mapping` | Custom topic name for table | table name |
 
-https://www.postgresql.org/docs/current/sql-createpublication.html
+## 📊 Publication Strategies
 
-If you change the publication, do not forget to change the slot name or delete the current one.
+Ditto supports two publication strategies:
 
-Notes:
+### 1. Single Publication (Recommended)
+- **One publication** for all tables
+- **Simple and efficient**
+- **Lower resource usage**
+- **Easy to maintain**
 
-1. To receive `DataOld` field you need to change REPLICA IDENTITY to FULL as described here:
-   [#SQL-ALTERTABLE-REPLICA-IDENTITY](https://www.postgresql.org/docs/current/sql-altertable.html#SQL-ALTERTABLE-REPLICA-IDENTITY)
+```yaml
+publication_strategy: "single"  # or omit (default)
+```
 
-## Service configuration
+**Results in**: `ditto` publication with all specified tables
 
-Environment variables for DB and NATS connection are still required, but filtering and topic mapping are now handled by `config.yml`.
+### 2. Multiple Publications
+- **Individual publication** per table
+- **Better fault isolation**
+- **More flexible scaling**
+- **Higher resource usage**
+
+```yaml
+publication_strategy: "multiple"
+publication_prefix: "ditto"
+```
+
+**Results in**: `ditto_deposit_events`, `ditto_withdraw_events`, etc.
+
+👉 **See [Publication Strategies Guide](docs/PUBLICATION_STRATEGIES.md) for detailed comparison**
+
+## Database Setup
+
+### PostgreSQL Configuration
+
+You must make the following settings in `postgresql.conf`:
+
+```ini
+wal_level = logical
+max_replication_slots >= 1
+max_wal_senders >= 1
+```
+
+### Replica Identity (Optional)
+
+To receive `DataOld` field for UPDATE/DELETE operations:
+
+```sql
+ALTER TABLE your_table REPLICA IDENTITY FULL;
+```
+
+### Manual Publication Management
+
+Publications are **automatically created and managed** by the service. However, you can also manage them manually:
+
+```sql
+-- Check current publications
+SELECT * FROM pg_publication;
+
+-- Create custom publication
+CREATE PUBLICATION ditto FOR TABLE table1, table2;
+
+-- Drop publication
+DROP PUBLICATION IF EXISTS ditto;
+```
+
+## Environment Variables
 
 ```bash
-**DB_DSN=postgres://postgres:password@localhost:5432/db_name?replication=database
-OUTPUT_PLUGIN="pgoutput"
-PUBLICATION_NAME=ditto
-SLOT_NAME=ditto
-NATS_PUB_URI="nats://localhost:4222"**
+# Database connection (with replication=database)
+DB_DSN="postgresql://postgres:password@localhost:5432/dbname?replication=database"
+
+# Redis connection
+REDIS_URL="redis://localhost:6379"
+
+# Optional: Log level
+LOG_LEVEL="info"
+
+# Optional: Application environment
+APP_ENV="dev"
 ```
 
-## TODO
-- [ ] update condition filter
-- [ ] refactor code listener
-- [ ] add more publisher
-- [ ] move config to json api
-- [ ] have server to config
-- [ ] enable run in cluster
+## 🔧 Usage
+
+### Quick Start with Docker Compose
+
+```bash
+# 1. Copy example files
+cp config/config.example.yml config/config.yml
+cp docker-compose.example.yml docker-compose.yml
+cp init-db.example.sql init-db.sql
+
+# 2. Edit configuration if needed
+nano config/config.yml
+
+# 3. Start all services
+docker-compose up -d
+
+# 4. Watch logs
+docker-compose logs -f ditto
+
+# 5. Test with sample data
+docker-compose exec postgres psql -U postgres -d ditto_db -c "SELECT generate_test_events(10);"
+
+# 6. Monitor Redis events (optional)
+docker-compose --profile debug up redis-cli
+```
+
+### Manual Setup
+
+#### 1. Setup Configuration
+
+```bash
+# Copy example config
+cp config/config.example.yml config/config.yml
+
+# Edit your configuration
+nano config/config.yml
+```
+
+#### 2. Set Environment Variables
+
+```bash
+export DB_DSN="postgresql://postgres:password@localhost:5432/dbname?replication=database"
+export REDIS_URL="redis://localhost:6379"
+```
+
+#### 3. Run the Service
+
+```bash
+# Using Go
+go run main.go
+
+# Using Docker
+docker build -t ditto .
+docker run --env-file .env ditto
+
+# Using Task
+task run
+```
+
+## 🛠 Tools & Scripts
+
+### Publication Check Script
+
+Use the SQL script to verify publications:
+
+```bash
+# Check current publication status
+psql -d your_database -f scripts/check_publications.sql
+```
+
+### Release Script
+
+Automated release script that creates tags and triggers CI/CD:
+
+```bash
+# Create a new release
+./scripts/release.sh v1.0.0
+
+# This will:
+# - Validate version format
+# - Check git status
+# - Create and push git tag
+# - Trigger GitHub Actions to build Docker image and create release
+```
+
+### Example Output Topics
+
+With configuration:
+```yaml
+prefix_watch_list: "events"
+watch_list:
+  deposit_events:
+    mapping: "deposits"
+  withdraw_events:
+    mapping: "withdrawals"
+```
+
+**Published topics**:
+- `events.deposits`
+- `events.withdrawals`
+
+## 📚 Documentation
+
+- [Publication Strategies Guide](docs/PUBLICATION_STRATEGIES.md) - Detailed comparison of strategies
+- [Configuration Examples](config/config.example.yml) - Sample configurations
+
+## 🏗 Architecture
+
+```
+PostgreSQL WAL → Logical Decoding → Ditto Service → Redis Topics
+     ↓              ↓                    ↓             ↓
+   Tables    →   pgoutput    →    Event Processing → Consumer Apps
+```
+
+## 🐳 Docker & CI/CD
+
+### Docker Images
+
+Pre-built Docker images are available on Docker Hub:
+
+```bash
+# Latest version
+docker pull phathdt379/ditto:latest
+
+# Specific version
+docker pull phathdt379/ditto:v1.0.0
+
+# Run with environment variables
+docker run --env-file .env phathdt379/ditto:latest
+```
+
+### Automated Releases
+
+Releases are automated via GitHub Actions:
+
+1. **Create Release**: Push a git tag (e.g., `v1.0.0`)
+2. **Auto Build**: GitHub Actions builds multi-platform Docker images
+3. **Auto Deploy**: Images pushed to Docker Hub
+4. **GitHub Release**: Automatically created with release notes
+
+### Docker Compose Example
+
+```yaml
+version: '3.8'
+services:
+  ditto:
+    image: phathdt379/ditto:latest
+    environment:
+      - DB_DSN=postgresql://postgres:password@postgres:5432/dbname?replication=database
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+    volumes:
+      - ./config:/app/config
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: dbname
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_replication_slots=4
+      -c max_wal_senders=4
+
+  redis:
+    image: redis:7-alpine
+```
+
+## 🚧 TODO
+
+- [ ] Support multiple message brokers (NATS, Kafka)
+- [ ] Add condition-based filtering
+- [ ] Web UI for configuration management
+- [ ] Metrics and monitoring
+- [ ] Cluster support
+- [ ] Dead letter queue handling
+- [ ] Schema evolution support
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+**Note**: This service is designed for high-throughput, low-latency event processing. Make sure your PostgreSQL and Redis instances are properly configured for your expected load.
