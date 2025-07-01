@@ -172,13 +172,30 @@ APP_ENV="dev"
 
 ## 🔧 Usage
 
-### Quick Start with Docker Compose
+### Quick Start with Docker
+
+#### Option 1: Simple Docker Run (Recommended for testing)
+
+```bash
+# 1. Build the image
+./scripts/build-docker.sh --load -p linux/arm64  # For Mac M1/M2
+# OR
+./scripts/build-docker.sh --load -p linux/amd64  # For Intel
+
+# 2. Run with auto-configuration
+./scripts/run-docker.sh -d -f
+
+# The script will auto-create .env and config files if missing
+# Edit them as needed and restart:
+./scripts/run-docker.sh restart
+```
+
+#### Option 2: Docker Compose (Full development setup)
 
 ```bash
 # 1. Copy example files
 cp config/config.example.yml config/config.yml
 cp docker-compose.example.yml docker-compose.yml
-cp init-db.example.sql init-db.sql
 
 # 2. Edit configuration if needed
 nano config/config.yml
@@ -253,6 +270,33 @@ Automated release script that creates tags and triggers CI/CD:
 # - Check git status
 # - Create and push git tag
 # - Trigger GitHub Actions to build Docker image and create release
+```
+
+### Docker Run Script
+
+Easy Docker container management:
+
+```bash
+# Run with default settings (interactive)
+./scripts/run-docker.sh
+
+# Run in detached mode
+./scripts/run-docker.sh -d
+
+# Run detached and follow logs
+./scripts/run-docker.sh -d -f
+
+# Use production image
+./scripts/run-docker.sh -i phathdt379/ditto:latest
+
+# Container management
+./scripts/run-docker.sh stop     # Stop container
+./scripts/run-docker.sh restart  # Restart container
+./scripts/run-docker.sh logs     # View logs
+./scripts/run-docker.sh exec     # Execute shell
+
+# Remove existing and run new
+./scripts/run-docker.sh -r
 ```
 
 ### Example Output Topics

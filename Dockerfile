@@ -1,16 +1,24 @@
-FROM golang:1.24.1-alpine as builder
+FROM golang:1.24.4-alpine AS builder
+
 WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download
+
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ditto ./main.go
 
-FROM alpine:3.21
+# Build for the target architecture with static linking
+ARG TARGETARCH
+ARG TARGETOS
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w -extldflags=-static" \
+    -trimpath \
+    -o ditto ./main.go
+
+FROM gcr.io/distroless/static:nonroot
+
 WORKDIR /app
-RUN chown nobody:nobody /app
-USER nobody:nobody
-COPY --from=builder --chown=nobody:nobody ./app/ditto .
-COPY --from=builder --chown=nobody:nobody ./app/run.sh .
 
-ENTRYPOINT sh run.sh
+COPY --from=builder /app/ditto ./ditto
+
+ENTRYPOINT ["./ditto"]
