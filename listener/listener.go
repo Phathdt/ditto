@@ -294,7 +294,7 @@ func (l *listener) ensurePublicationMatches(conn *pgx.Conn, expectedTables []str
 
 func (l *listener) getCurrentPublicationTables(conn *pgx.Conn, publicationName string) ([]string, error) {
 	query := `
-		SELECT COALESCE(array_agg(t.tablename ORDER BY t.tablename), '{}') as tables
+		SELECT COALESCE(array_agg(t.tablename ORDER BY t.tablename) FILTER (WHERE t.tablename IS NOT NULL), '{}') as tables
 		FROM pg_publication p
 		LEFT JOIN pg_publication_tables t ON p.pubname = t.pubname
 		WHERE p.pubname = $1
