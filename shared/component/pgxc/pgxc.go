@@ -66,13 +66,13 @@ func (p *pgxc) Activate(sc sctx.ServiceContext) error {
 		return err
 	}
 
-	pluginArguments := []string{"proto_version '1'", "publication_names 'ditto'"}
-
 	// Use configurable slot name, default to "ditto" if not set
 	slotName := p.slotName
 	if slotName == "" {
 		slotName = "ditto"
 	}
+
+	pluginArguments := []string{"proto_version '1'", fmt.Sprintf("publication_names '%s'", slotName)}
 
 	var countSlot int
 	if err = queryConn.QueryRow(context.Background(), "SELECT COUNT(*) FROM pg_replication_slots where slot_name = $1", slotName).Scan(&countSlot); err != nil {

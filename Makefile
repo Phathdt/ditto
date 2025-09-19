@@ -49,8 +49,8 @@ clean: ## Clean build artifacts
 	rm -rf bin/
 	docker image prune -f
 
-run: build ## Run locally
-	./bin/ditto
+run: ## Run locally
+	go run main.go
 
 logs: ## Show container logs
 	docker logs -f ditto-1
